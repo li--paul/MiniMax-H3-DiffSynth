@@ -15,16 +15,24 @@ driver 595.97 (CUDA 13.2).
 
 ## Setup
 
+Restore the environment from `pyproject.toml` + `uv.lock` (torch/torchvision are
+pinned to the cu132 index via `[tool.uv.sources]`):
+
 ```powershell
-# 1. Create venv (Python 3.12, in PyTorch's supported 3.10-3.14 range)
+uv sync                 # creates .venv, installs everything per the lockfile
+uv run python apply_patches.py   # re-apply Windows diffsynth patches
+```
+
+Manual setup (equivalent, if you prefer not to use uv sync):
+
+```powershell
 uv venv .venv --python 3.12
-
-# 2. Install CUDA PyTorch (cu132 matches driver 13.2; falls back to cu130)
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu132
-
-# 3. Install DiffSynth + bitsandbytes
 uv pip install "diffsynth[all]" bitsandbytes huggingface_hub
 ```
+
+Note: diffsynth must be a *direct* dependency for the cu132 pin to take effect;
+as a transitive-only package, `[tool.uv.sources]` was ignored in uv 0.11.7.
 
 ## Model download (~33GB)
 
@@ -68,6 +76,8 @@ distillation, so no custom sampler is needed.
 
 ## Patches applied to diffsynth (Windows workarounds)
 
+Run `uv run python apply_patches.py` after every `uv sync` to re-apply:
+
 1. **Disk-offload mmap crash** — `SafetensorsDiskMap.flush_files()` re-opens
    the `.safetensors` when >1e9 params are read, invalidating lazy mmap views
    (access violation in `torch_cpu.dll`). Fix: set
@@ -76,9 +86,8 @@ distillation, so no custom sampler is needed.
 
 2. **`copy.deepcopy` crash in VRAM manager** — `layers.py:computation_module()`
    deep-copies quantized bnb layers when VRAM is tight, crashing in
-   `torch.storage.clone`. Patch in
-   `.venv/Lib/site-packages/diffsynth/core/vram/layers.py`: for disk-offloaded
-   modules, always load from disk to the compute device instead of deep-copy:
+   `torch.storage.clone`. `apply_patches.py` rewrites it so disk-offloaded
+   modules always load from disk to the compute device instead of deep-copy:
 
    ```python
    if self.disk_offload:
